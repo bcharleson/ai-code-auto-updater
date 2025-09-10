@@ -1,7 +1,8 @@
 {
   "idePreferences": {
     "priority": ["cursor", "vscode"],
-    "installInAllIDEs": false,
+    "installInAllIDEs": true,
+    "installInAllProfiles": true,
     "preferredIDE": "auto"
   },
   "updateSettings": {
