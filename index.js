@@ -44,19 +44,48 @@ class IDEManager {
     for (const [ide, config] of Object.entries(this.supportedIDEs)) {
       try {
         const command = process.env[config.envVar] || ide;
-        execSync(`${command} ${config.commands.version}`, { 
-          stdio: 'ignore',
-          timeout: 5000 
-        });
-        available.push({ 
-          ide, 
-          config, 
-          command,
-          priority: config.priority 
-        });
-        this.log(`✓ ${config.name} detected`, 'success');
+        
+        // Try multiple detection methods for better cross-device compatibility
+        let detected = false;
+        
+        // Method 1: Try CLI command with timeout
+        try {
+          execSync(`${command} ${config.commands.version}`, { 
+            stdio: 'ignore',
+            timeout: 10000,
+            env: { ...process.env, DISPLAY: process.env.DISPLAY || ':0' }
+          });
+          detected = true;
+        } catch (cliError) {
+          this.log(`CLI detection failed for ${config.name}, trying folder detection...`, 'warning');
+        }
+        
+        // Method 2: Check for extension folders (fallback)
+        if (!detected) {
+          const homeDir = process.env.HOME || process.env.USERPROFILE;
+          const extensionPath = ide === 'cursor' 
+            ? path.join(homeDir, '.cursor', 'extensions')
+            : path.join(homeDir, '.vscode', 'extensions');
+          
+          if (fs.existsSync(extensionPath)) {
+            detected = true;
+            this.log(`✓ ${config.name} detected via folder structure`, 'success');
+          }
+        }
+        
+        if (detected) {
+          available.push({ 
+            ide, 
+            config, 
+            command,
+            priority: config.priority 
+          });
+          this.log(`✓ ${config.name} detected`, 'success');
+        } else {
+          this.log(`✗ ${config.name} not available`, 'warning');
+        }
       } catch (error) {
-        this.log(`✗ ${config.name} not available`, 'warning');
+        this.log(`✗ ${config.name} detection failed: ${error.message}`, 'warning');
       }
     }
     
@@ -77,31 +106,49 @@ class IDEManager {
       try {
         this.log(`Checking ${config.name} for Augment extension...`);
         
-        const output = execSync(`${command} ${config.commands.listExtensions}`, {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-          timeout: 10000
-        });
-        
-        // Handle different output formats
-        let match;
+        // Use a more reliable approach - try to get version from extension folder first
         if (ide === 'cursor') {
-          // Cursor format: augment.vscode-augment@1.2.3
-          match = output.match(/augment\.vscode-augment@(\d+\.\d+\.\d+)/);
+          const version = await this.getCursorExtensionVersion(extensionId);
+          if (version) {
+            this.currentIDE = { ide, config, command };
+            this.log(`Found in ${config.name}: ${version}`, 'success');
+            return version;
+          }
         } else {
-          // VS Code format: augment.vscode-augment
-          if (output.includes('augment.vscode-augment')) {
-            // For VS Code, we need to get version differently since --list-extensions doesn't show versions
-            // We'll try to get it from the extension folder
-            match = await this.getVSCodeExtensionVersion(extensionId);
+          // For VS Code, try the folder approach first
+          const version = await this.getVSCodeExtensionVersion(extensionId);
+          if (version) {
+            this.currentIDE = { ide, config, command };
+            this.log(`Found in ${config.name}: ${version}`, 'success');
+            return version;
           }
         }
         
-        if (match) {
-          this.currentIDE = { ide, config, command };
-          const version = ide === 'cursor' ? match[1] : match;
-          this.log(`Found in ${config.name}: ${version}`, 'success');
-          return version;
+        // Fallback to CLI command with better error handling
+        try {
+          const output = execSync(`${command} ${config.commands.listExtensions}`, {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: 10000
+          });
+          
+          let match;
+          if (ide === 'cursor') {
+            match = output.match(/augment\.vscode-augment@(\d+\.\d+\.\d+)/);
+          } else {
+            if (output.includes('augment.vscode-augment')) {
+              match = await this.getVSCodeExtensionVersion(extensionId);
+            }
+          }
+          
+          if (match) {
+            this.currentIDE = { ide, config, command };
+            const version = ide === 'cursor' ? match[1] : match;
+            this.log(`Found in ${config.name}: ${version}`, 'success');
+            return version;
+          }
+        } catch (cliError) {
+          this.log(`CLI command failed for ${config.name}, trying folder approach...`, 'warning');
         }
       } catch (error) {
         this.log(`${config.name} check failed: ${error.message}`, 'warning');
@@ -109,6 +156,30 @@ class IDEManager {
     }
     
     this.log('Augment extension not found in any IDE', 'warning');
+    return null;
+  }
+
+  async getCursorExtensionVersion(extensionId) {
+    try {
+      // Try to get version from Cursor extension folder
+      const homeDir = process.env.HOME || process.env.USERPROFILE;
+      const cursorExtensionsPath = path.join(homeDir, '.cursor', 'extensions');
+      
+      if (fs.existsSync(cursorExtensionsPath)) {
+        const extensions = fs.readdirSync(cursorExtensionsPath);
+        const augmentFolder = extensions.find(folder => folder.startsWith('augment.vscode-augment-'));
+        
+        if (augmentFolder) {
+          const version = augmentFolder.replace('augment.vscode-augment-', '');
+          if (semver.valid(version)) {
+            return version;
+          }
+        }
+      }
+    } catch (error) {
+      this.log(`Failed to get Cursor extension version: ${error.message}`, 'warning');
+    }
+    
     return null;
   }
 
@@ -144,12 +215,18 @@ class IDEManager {
     const { config, command } = this.currentIDE;
     this.log(`Installing extension via ${config.name} CLI...`);
     
-    execSync(`${command} ${config.commands.installExtension} "${vsixPath}"`, {
-      stdio: 'inherit',
-      timeout: 30000
-    });
-    
-    this.log(`Extension installed successfully in ${config.name}`, 'success');
+    try {
+      execSync(`${command} ${config.commands.installExtension} "${vsixPath}"`, {
+        stdio: 'inherit',
+        timeout: 60000, // Increased timeout for slower devices
+        env: { ...process.env, DISPLAY: process.env.DISPLAY || ':0' }
+      });
+      
+      this.log(`Extension installed successfully in ${config.name}`, 'success');
+    } catch (error) {
+      this.log(`Installation failed: ${error.message}`, 'error');
+      throw new Error(`Failed to install extension in ${config.name}: ${error.message}`);
+    }
   }
 
   async installExtensionInAllIDEs(vsixPath) {
