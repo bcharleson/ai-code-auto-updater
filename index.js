@@ -167,12 +167,17 @@ class IDEManager {
       
       if (fs.existsSync(cursorExtensionsPath)) {
         const extensions = fs.readdirSync(cursorExtensionsPath);
-        const augmentFolder = extensions.find(folder => folder.startsWith('augment.vscode-augment-'));
+        const augmentFolders = extensions.filter(folder => folder.startsWith('augment.vscode-augment-'));
         
-        if (augmentFolder) {
-          const version = augmentFolder.replace('augment.vscode-augment-', '');
-          if (semver.valid(version)) {
-            return version;
+        if (augmentFolders.length > 0) {
+          // If multiple versions exist, return the highest version
+          const versions = augmentFolders
+            .map(folder => folder.replace('augment.vscode-augment-', ''))
+            .filter(v => semver.valid(v))
+            .sort((a, b) => semver.rcompare(a, b)); // Sort descending
+          
+          if (versions.length > 0) {
+            return versions[0]; // Return highest version
           }
         }
       }
@@ -191,12 +196,17 @@ class IDEManager {
       
       if (fs.existsSync(vscodeExtensionsPath)) {
         const extensions = fs.readdirSync(vscodeExtensionsPath);
-        const augmentFolder = extensions.find(folder => folder.startsWith('augment.vscode-augment-'));
+        const augmentFolders = extensions.filter(folder => folder.startsWith('augment.vscode-augment-'));
         
-        if (augmentFolder) {
-          const version = augmentFolder.replace('augment.vscode-augment-', '');
-          if (semver.valid(version)) {
-            return version;
+        if (augmentFolders.length > 0) {
+          // If multiple versions exist, return the highest version
+          const versions = augmentFolders
+            .map(folder => folder.replace('augment.vscode-augment-', ''))
+            .filter(v => semver.valid(v))
+            .sort((a, b) => semver.rcompare(a, b)); // Sort descending
+          
+          if (versions.length > 0) {
+            return versions[0]; // Return highest version
           }
         }
       }
@@ -543,17 +553,31 @@ class AugmentMonitor {
         return true;
       }
 
-      // Wait a moment for the extension to be recognized
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait longer and retry multiple times for the extension to be recognized
+      const maxRetries = 5;
+      const delayMs = 3000; // 3 seconds between attempts
       
-      const installedVersion = await this.getCurrentVersion();
-      
-      if (installedVersion === expectedVersion) {
-        this.log(`Installation verified! Running version ${installedVersion}`, 'success');
-        return true;
-      } else {
-        throw new Error(`Version mismatch: expected ${expectedVersion}, got ${installedVersion}`);
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        this.log(`Verification attempt ${attempt}/${maxRetries}...`, 'info');
+        
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        
+        const installedVersion = await this.getCurrentVersion();
+        
+        if (installedVersion === expectedVersion) {
+          this.log(`Installation verified! Running version ${installedVersion}`, 'success');
+          return true;
+        } else {
+          this.log(`Attempt ${attempt}: expected ${expectedVersion}, found ${installedVersion}`, 'warning');
+          
+          // If this is the last attempt, throw error
+          if (attempt === maxRetries) {
+            throw new Error(`Version mismatch after ${maxRetries} attempts: expected ${expectedVersion}, got ${installedVersion}`);
+          }
+        }
       }
+      
+      return false;
     } catch (error) {
       this.log(`Installation verification failed: ${error.message}`, 'error');
       throw error;
