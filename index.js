@@ -286,6 +286,18 @@ class AugmentMonitor {
     }
   }
 
+  /**
+   * Normalize a version string to handle suffixes like "-universal"
+   * @param {string} version - Version string to normalize
+   * @returns {string|null} - Normalized version or null if invalid
+   */
+  normalizeVersion(version) {
+    if (!version) return null;
+
+    const coerced = semver.coerce(version);
+    return coerced ? coerced.version : null;
+  }
+
   log(message, level = 'info') {
     const timestamp = new Date().toISOString();
     const colors = {
