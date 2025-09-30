@@ -1,7 +1,7 @@
 {
-  "name": "augment-monitor",
+  "name": "augment-code-auto-updater",
   "version": "1.0.0",
-  "description": "Automated monitor and updater for Augment VS Code extension in Cursor",
+  "description": "Automated updater for Augment VS Code extension in Cursor and VS Code",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

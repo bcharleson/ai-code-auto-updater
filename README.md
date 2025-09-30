@@ -35,8 +35,8 @@ If you want to run this on another Mac (like a Mac mini):
 
 ```bash
 # Clone the repository
-git clone https://github.com/bcharleson/augment-code-auto-install.git
-cd augment-code-auto-install
+git clone https://github.com/bcharleson/augment-code-auto-updater.git
+cd augment-code-auto-updater
 
 # Install dependencies
 npm install
@@ -125,7 +125,7 @@ If you want to stop automatic updates:
 Ctrl+C
 
 # Remove the cron job after installation
-crontab -l | grep -v "augment-monitor" | crontab -
+crontab -l | grep -v "augment-code-auto-updater" | crontab -
 
 # Or edit cron jobs manually
 crontab -e
@@ -145,7 +145,7 @@ crontab -e
 crontab -e
 
 # Add # at the beginning of the line to comment it out:
-# 0 */6 * * * /path/to/augment-monitor/index.js
+# 0 */6 * * * /path/to/augment-code-auto-updater/index.js
 
 # To re-enable, just remove the #
 ```
@@ -270,7 +270,7 @@ crontab -l
 
 ### Remove Cron Job
 ```bash
-crontab -l | grep -v '/path/to/augment-monitor/index.js' | crontab -
+crontab -l | grep -v '/path/to/augment-code-auto-updater/index.js' | crontab -
 ```
 
 ### Manual Installation Test
@@ -317,7 +317,7 @@ curl -X POST https://marketplace.visualstudio.com/_apis/public/gallery/extension
 ## File Structure
 
 ```
-augment-monitor/
+augment-code-auto-updater/
 ├── index.js              # Main monitoring script
 ├── package.json           # Dependencies and scripts
 ├── config.json           # Configuration settings
