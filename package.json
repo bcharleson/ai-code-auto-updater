@@ -8,6 +8,8 @@
     "test": "node index.js --dry-run",
     "test-ide": "node test-ide-detection.js",
     "test-compatibility": "node test-compatibility.js",
+    "test-error-handling": "node test-error-handling.js",
+    "test-all": "npm run test-error-handling && npm run test-ide && npm run test-compatibility",
     "install-cron": "./install-cron.sh",
     "install-task": "powershell -ExecutionPolicy Bypass -File ./Install-WindowsTask.ps1",
     "install-task-work": "powershell -ExecutionPolicy Bypass -File ./Install-WindowsTask.ps1 -Schedule WorkHours",

@@ -14,13 +14,16 @@ This script now supports both **Cursor** and **VS Code**! It will automatically:
 
 - 🔍 **Automatic Version Detection** - Monitors VS Code Marketplace for new releases
 - 👤 **Human-in-the-Loop** - Always prompts for user approval before updating
-- 📦 **Automated Download** - Downloads VSIX files from marketplace
+- 📦 **Automated Download** - Downloads VSIX files from marketplace with retry logic
 - ⚡ **Multi-IDE Support** - Works with Cursor and VS Code automatically
-- 🔧 **Smart Detection** - Automatically finds your installed IDEs
+- 🔧 **Smart Detection** - Automatically finds your installed IDEs and latest versions
 - 📦 **Flexible Installation** - Install in one IDE or all available IDEs
-- ✅ **Verification** - Confirms successful installation before cleanup
+- ✅ **Robust Verification** - Multiple retry attempts with intelligent version matching
 - 🧹 **Auto Cleanup** - Removes temporary VSIX files after installation
 - 📅 **Cron Scheduling** - Runs automatically in background
+- 🛡️ **Error Recovery** - Graceful failure handling with actionable user guidance
+- 🔄 **Retry Mechanisms** - Automatic retries for downloads and verification
+- 📊 **Comprehensive Testing** - Full test suite for error handling and edge cases
 
 ## Quick Start
 
@@ -107,6 +110,8 @@ Here are the main commands you can use:
 | Command | What it does |
 |---------|-------------|
 | `npm run test-ide` | Test which IDEs are detected and if Augment is installed |
+| `npm run test-error-handling` | Run comprehensive error handling tests |
+| `npm run test-all` | Run all test suites (error handling, IDE detection, compatibility) |
 | `npm test` | Test the script without making changes (safe to run) |
 | `npm start` | Run the actual update process |
 | `npm run install-cron` | Install automatic updates on macOS/Linux |
@@ -292,12 +297,35 @@ curl -X POST https://marketplace.visualstudio.com/_apis/public/gallery/extension
    - Run: `cursor --list-extensions`
 
 3. **"Download failed"**
+   - The script will automatically retry 3 times with exponential backoff
    - Check internet connection
    - Verify VS Code Marketplace is accessible
+   - If all retries fail, the VSIX file location will be provided for manual download
 
 4. **"Installation failed"**
    - Ensure Cursor is not running during installation
    - Check file permissions in temp directory
+
+5. **"Version verification failed"**
+   - The script now retries verification 3 times with increasing delays
+   - If verification fails, the VSIX file is kept for manual installation
+   - Try restarting your IDE and checking if the extension is working
+   - Use the provided manual installation command if needed
+
+6. **"Multiple versions detected"**
+   - The script automatically selects the latest version
+   - Old extension folders can be safely removed manually if desired
+
+5. **"Verification failed" but installation succeeded**
+   - The script will keep the VSIX file for manual verification
+   - Restart your IDE and check if the extension is working
+   - The script provides step-by-step recovery instructions
+   - Multiple versions may exist - the script automatically uses the latest
+
+6. **Version mismatch errors**
+   - The script now handles version suffixes (like "-universal") automatically
+   - Multiple verification attempts with increasing delays
+   - If verification fails, follow the on-screen instructions to restart your IDE
 
 ### Windows-Specific Issues
 
