@@ -494,42 +494,68 @@ class AugmentMonitor {
   }
 
   async downloadVsix(version) {
-    try {
-      this.log(`Downloading VSIX file for version ${version}...`);
+    const maxRetries = 3;
+    let lastError;
 
-      if (this.isDryRun) {
-        this.log('DRY RUN: Would download VSIX file', 'warning');
-        return path.join(this.tempDir, `${this.extensionId}-${version}.vsix`);
-      }
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        this.log(`Downloading VSIX file for version ${version}... (attempt ${attempt}/${maxRetries})`);
 
-      const downloadUrl = `https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${this.publisherId}/vsextensions/${this.extensionName}/${version}/vspackage`;
-
-      const response = await fetch(downloadUrl, {
-        headers: {
-          'Accept': 'application/octet-stream',
-          'User-Agent': 'VSCode/1.85.0 (Windows NT 10.0; Win64; x64)',
-          'Accept-Encoding': 'gzip, deflate, br'
+        if (this.isDryRun) {
+          this.log('DRY RUN: Would download VSIX file', 'warning');
+          return path.join(this.tempDir, `${this.extensionId}-${version}.vsix`);
         }
-      });
 
-      if (!response.ok) {
-        throw new Error(`Download failed with status: ${response.status}`);
+        const downloadUrl = `https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${this.publisherId}/vsextensions/${this.extensionName}/${version}/vspackage`;
+
+        const response = await fetch(downloadUrl, {
+          headers: {
+            'Accept': 'application/octet-stream',
+            'User-Agent': 'VSCode/1.85.0 (Windows NT 10.0; Win64; x64)',
+            'Accept-Encoding': 'gzip, deflate, br'
+          },
+          timeout: 60000 // 60 second timeout
+        });
+
+        if (!response.ok) {
+          throw new Error(`Download failed with status: ${response.status}`);
+        }
+
+        const fileName = `${this.extensionId}-${version}.vsix`;
+        const filePath = path.join(this.tempDir, fileName);
+
+        const buffer = await response.buffer();
+        
+        // Verify downloaded file is not empty
+        if (buffer.length === 0) {
+          throw new Error('Downloaded file is empty');
+        }
+
+        fs.writeFileSync(filePath, buffer);
+
+        // Verify file was written successfully
+        if (!fs.existsSync(filePath)) {
+          throw new Error('File write verification failed');
+        }
+
+        const fileSizeMB = (buffer.length / (1024 * 1024)).toFixed(2);
+        this.log(`Downloaded ${fileName} (${fileSizeMB} MB)`, 'success');
+
+        return filePath;
+      } catch (error) {
+        lastError = error;
+        this.log(`Download attempt ${attempt} failed: ${error.message}`, 'error');
+        
+        if (attempt < maxRetries) {
+          const delayMs = 2000 * attempt; // Progressive delay: 2s, 4s, 6s
+          this.log(`Retrying in ${delayMs / 1000} seconds...`, 'warning');
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
       }
-
-      const fileName = `${this.extensionId}-${version}.vsix`;
-      const filePath = path.join(this.tempDir, fileName);
-
-      const buffer = await response.buffer();
-      fs.writeFileSync(filePath, buffer);
-
-      const fileSizeMB = (buffer.length / (1024 * 1024)).toFixed(2);
-      this.log(`Downloaded ${fileName} (${fileSizeMB} MB)`, 'success');
-
-      return filePath;
-    } catch (error) {
-      this.log(`Download failed: ${error.message}`, 'error');
-      throw error;
     }
+
+    // All retries failed
+    throw new Error(`Download failed after ${maxRetries} attempts. Last error: ${lastError.message}`);
   }
 
   async installExtension(vsixPath) {
@@ -644,6 +670,7 @@ class AugmentMonitor {
       }
 
       let vsixPath = null;
+      let updateSuccessful = false;
 
       try {
         // Download VSIX
@@ -654,6 +681,8 @@ class AugmentMonitor {
         
         // Verify installation
         await this.verifyInstallation(latestVersion);
+        
+        updateSuccessful = true;
         
         // Success message
         console.log('\n' + chalk.green('✅ Update completed successfully!'));
@@ -674,10 +703,37 @@ class AugmentMonitor {
           );
         }
 
+      } catch (error) {
+        // Log the specific error
+        this.log(`Update failed: ${error.message}`, 'error');
+        
+        // Send failure notification in cron mode
+        if (this.isCronMode) {
+          await this.sendNativeNotification(
+            'Augment Update Failed',
+            `Failed to update: ${error.message}`,
+            ['OK']
+          );
+        }
+        
+        throw error; // Re-throw to be caught by outer try-catch
       } finally {
-        // Always cleanup the downloaded file
+        // Always cleanup the downloaded file (whether successful or not)
         if (vsixPath) {
           this.cleanupFile(vsixPath);
+          
+          // Also check for and clean up any partial downloads
+          try {
+            const tempFiles = fs.readdirSync(this.tempDir);
+            for (const file of tempFiles) {
+              if (file.startsWith('augment.vscode-augment') && file.endsWith('.vsix')) {
+                const fullPath = path.join(this.tempDir, file);
+                this.cleanupFile(fullPath);
+              }
+            }
+          } catch (cleanupError) {
+            this.log(`Error during temp cleanup: ${cleanupError.message}`, 'warning');
+          }
         }
       }
 
