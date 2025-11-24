@@ -4,18 +4,18 @@ Automated monitoring and updating system for the Augment VS Code extension in **
 
 ## 🆕 Multi-IDE Support
 
-This script now supports both **Cursor** and **VS Code**! It will automatically:
+This script now supports **Cursor**, **VS Code**, and **Antigravity**! It will automatically:
 - Detect which IDEs you have installed
 - Check for the Augment extension in all available IDEs
 - Install updates in your preferred IDE (or all IDEs if configured)
-- Work seamlessly whether you use Cursor, VS Code, or both
+- Work seamlessly whether you use Cursor, VS Code, Antigravity, or all of them
 
 ## Features
 
 - 🔍 **Automatic Version Detection** - Monitors VS Code Marketplace for new releases
 - 👤 **Human-in-the-Loop** - Always prompts for user approval before updating
 - 📦 **Automated Download** - Downloads VSIX files from marketplace with retry logic
-- ⚡ **Multi-IDE Support** - Works with Cursor and VS Code automatically
+- ⚡ **Multi-IDE Support** - Works with Cursor, VS Code, and Antigravity automatically
 - 🔧 **Smart Detection** - Automatically finds your installed IDEs and latest versions
 - 📦 **Flexible Installation** - Install in one IDE or all available IDEs
 - ✅ **Robust Verification** - Multiple retry attempts with intelligent version matching
@@ -217,23 +217,38 @@ The cron job will automatically:
 
 ## User Interaction Flow
 
-When a new version is detected:
+When you run the updater manually (or via the app), it will check all installed IDEs:
 
 ```
-🚀 Augment Extension Update Available!
-──────────────────────────────────────────────────
-Current version: 0.511.0
-Latest version:  0.512.0
-──────────────────────────────────────────────────
+🔎 IDE Status Check
+────────────────────────────────────────────────────────────
+Latest Version: 0.658.0
+────────────────────────────────────────────────────────────
+Cursor     | 0.658.0         | Up to date
+VS Code    | 0.578.0         | Update Available
+Antigravity | 0.622.0        | Update Available
+────────────────────────────────────────────────────────────
 
-Would you like to download and install this update? (y/N):
+👉 Select an option:
+a) Update All IDEs
+1) Update Cursor only
+2) Update VS Code only
+3) Update Antigravity only
+q) Quit
+
+Enter choice:
 ```
 
-If you choose **Yes**:
-1. ⬬ Downloads VSIX file (e.g., `augment.vscode-augment-0.512.0.vsix`)
-2. 🔧 Installs via `cursor --install-extension`
-3. ✅ Verifies installation by checking version
-4. 🗑️ Deletes temporary VSIX file
+You can choose to:
+- Update all IDEs at once
+- Update a specific IDE
+- Quit without changes
+
+If you choose to update:
+1. ⬬ Downloads VSIX file once
+2. 🔧 Installs to selected IDEs
+3. ✅ Verifies installation for each
+4. 🗑️ Deletes temporary files
 5. 🎉 Shows success confirmation
 
 ## Configuration

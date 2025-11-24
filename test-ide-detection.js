@@ -2,6 +2,7 @@
 
 const { execSync } = require('child_process');
 const chalk = require('chalk');
+const fs = require('fs');
 
 console.log(chalk.blue('🔍 Testing Multi-IDE Detection...\n'));
 
@@ -15,7 +16,14 @@ const supportedIDEs = {
   vscode: {
     name: 'VS Code',
     command: 'code',
-    envVar: 'VSCODE_PATH'
+    envVar: 'VSCODE_PATH',
+    macPath: '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'
+  },
+  antigravity: {
+    name: 'Antigravity',
+    command: 'antigravity',
+    envVar: 'ANTIGRAVITY_PATH',
+    macPath: `${process.env.HOME}/.antigravity/antigravity/bin/antigravity`
   }
 };
 
@@ -23,19 +31,36 @@ let detectedCount = 0;
 
 for (const [ide, config] of Object.entries(supportedIDEs)) {
   try {
-    const command = process.env[config.envVar] || config.command;
-    const version = execSync(`${command} --version`, { 
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 5000 
-    }).trim();
-    
+    let command = process.env[config.envVar] || config.command;
+    let version;
+
+    try {
+      version = execSync(`${command} --version`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 5000
+      }).trim();
+    } catch (e) {
+      // Try fallback path
+      if (process.platform === 'darwin' && config.macPath && fs.existsSync(config.macPath)) {
+        command = `"${config.macPath}"`;
+        version = execSync(`${command} --version`, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: 5000
+        }).trim();
+        console.log(chalk.green(`✓ ${config.name} detected at fallback path`));
+      } else {
+        throw e;
+      }
+    }
+
     console.log(chalk.green(`✓ ${config.name} detected:`));
     console.log(`  Command: ${command}`);
     console.log(`  Version: ${version}`);
     console.log(`  Environment: ${process.env[config.envVar] ? 'Custom path' : 'System PATH'}\n`);
     detectedCount++;
-    
+
   } catch (error) {
     console.log(chalk.yellow(`✗ ${config.name} not available`));
     console.log(`  Error: ${error.message}\n`);
@@ -54,18 +79,32 @@ console.log(chalk.blue('\n🔍 Testing Extension Detection...\n'));
 
 for (const [ide, config] of Object.entries(supportedIDEs)) {
   try {
-    const command = process.env[config.envVar] || config.command;
+    let command = process.env[config.envVar] || config.command;
     const listCommand = ide === 'cursor' ? '--list-extensions --show-versions' : '--list-extensions';
-    
-    const output = execSync(`${command} ${listCommand}`, {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 10000
-    });
-    
+
+    let output;
+    try {
+      output = execSync(`${command} ${listCommand}`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 10000
+      });
+    } catch (e) {
+      if (process.platform === 'darwin' && config.macPath && fs.existsSync(config.macPath)) {
+        command = `"${config.macPath}"`;
+        output = execSync(`${command} ${listCommand}`, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: 10000
+        });
+      } else {
+        throw e;
+      }
+    }
+
     if (output.includes('augment.vscode-augment')) {
       console.log(chalk.green(`✓ Augment extension found in ${config.name}`));
-      
+
       if (ide === 'cursor') {
         const match = output.match(/augment\.vscode-augment@(\d+\.\d+\.\d+)/);
         if (match) {
@@ -78,7 +117,7 @@ for (const [ide, config] of Object.entries(supportedIDEs)) {
       console.log(chalk.yellow(`- Augment extension not found in ${config.name}`));
     }
     console.log('');
-    
+
   } catch (error) {
     console.log(chalk.red(`✗ Failed to check ${config.name}: ${error.message}\n`));
   }
