@@ -1,22 +1,19 @@
 {
-  "name": "augment-code-auto-updater",
-  "version": "1.0.0",
-  "description": "Automated updater for Augment VS Code extension in Cursor and VS Code",
+  "name": "ai-code-updater",
+  "version": "2.0.0",
+  "description": "Automated updater for AI coding tools: Augment (VS Code extension), Claude Code CLI, and Gemini CLI",
   "main": "index.js",
+  "bin": {
+    "ai-code-updater": "./index.js",
+    "acu": "./index.js"
+  },
   "scripts": {
     "start": "node index.js",
     "test": "node index.js --dry-run",
-    "test-ide": "node test-ide-detection.js",
-    "test-compatibility": "node test-compatibility.js",
-    "test-error-handling": "node test-error-handling.js",
-    "test-all": "npm run test-error-handling && npm run test-ide && npm run test-compatibility",
+    "create-app": "./create-app.sh",
     "install-cron": "./install-cron.sh",
     "install-task": "powershell -ExecutionPolicy Bypass -File ./Install-WindowsTask.ps1",
-    "install-task-work": "powershell -ExecutionPolicy Bypass -File ./Install-WindowsTask.ps1 -Schedule WorkHours",
-    "install-task-daily": "powershell -ExecutionPolicy Bypass -File ./Install-WindowsTask.ps1 -Schedule Daily",
-    "test-task": "powershell -ExecutionPolicy Bypass -File ./Install-WindowsTask.ps1 -WhatIf",
-    "uninstall-task": "powershell -ExecutionPolicy Bypass -File ./Uninstall-WindowsTask.ps1",
-    "task-status": "powershell -Command \"Get-ScheduledTask -TaskName 'AugmentMonitor' -ErrorAction SilentlyContinue | Select-Object TaskName,State,LastRunTime,NextRunTime | Format-Table -AutoSize\""
+    "uninstall-task": "powershell -ExecutionPolicy Bypass -File ./Uninstall-WindowsTask.ps1"
   },
   "dependencies": {
     "node-fetch": "^2.7.0",
@@ -26,7 +23,7 @@
   "engines": {
     "node": ">=14.0.0"
   },
-  "keywords": ["cursor", "vscode", "extension", "automation", "augment"],
+  "keywords": ["cursor", "vscode", "extension", "automation", "augment", "claude-code", "gemini-cli", "ai", "coding-assistant"],
   "author": "Brandon Charleson",
   "license": "MIT"
 } 

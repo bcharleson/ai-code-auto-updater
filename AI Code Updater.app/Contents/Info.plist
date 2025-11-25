@@ -3,19 +3,19 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>AugmentUpdater</string>
+    <string>AICodeUpdater</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.augment.updater</string>
+    <string>com.aicode.updater</string>
     <key>CFBundleName</key>
-    <string>Augment Updater</string>
+    <string>AI Code Updater</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>2.0.0</string>
     <key>CFBundleVersion</key>
-    <string>1.0.0</string>
+    <string>2.0.0</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.12</string>
     <key>NSHighResolutionCapable</key>

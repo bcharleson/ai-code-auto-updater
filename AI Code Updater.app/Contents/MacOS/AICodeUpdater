@@ -1,0 +1,52 @@
+#!/bin/bash
+
+# Get the project directory (parent of .app bundle)
+PROJECT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+PARENT_DIR="$(dirname "$PROJECT_DIR")"
+
+# Function to show notification
+show_notification() {
+    osascript -e "display notification \"$2\" with title \"$1\""
+}
+
+# Function to show dialog
+show_dialog() {
+    osascript -e "display dialog \"$2\" with title \"$1\" buttons {\"OK\"} default button \"OK\""
+}
+
+# Cleanup any stray empty files that cursor CLI might create
+cleanup_stray_files() {
+    # Remove empty 'augment-code' file if it exists in parent directory
+    local stray_file="$PARENT_DIR/augment-code"
+    if [ -f "$stray_file" ] && [ ! -s "$stray_file" ]; then
+        rm -f "$stray_file" 2>/dev/null
+    fi
+}
+
+# Change to project directory
+cd "$PROJECT_DIR" || {
+    show_dialog "Error" "Could not find project directory"
+    exit 1
+}
+
+# Check if node_modules exists
+if [ ! -d "node_modules" ]; then
+    show_notification "AI Code Updater" "Installing dependencies..."
+    npm install
+fi
+
+# Run cleanup before starting
+cleanup_stray_files
+
+# Run the updater in a new Terminal window with proper key handling
+osascript <<EOF
+tell application "Terminal"
+    activate
+    do script "cd '$PROJECT_DIR' && clear && echo '🚀 AI Code Tools Updater' && echo '================================' && echo '' && npm start; echo ''; echo 'Press ENTER to close this window...'; read; exit"
+end tell
+EOF
+
+# Run cleanup after completion (with small delay to let script start)
+sleep 2
+cleanup_stray_files
+

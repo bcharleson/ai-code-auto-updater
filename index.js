@@ -8,387 +8,48 @@ const readline = require('readline');
 const semver = require('semver');
 const chalk = require('chalk');
 
-class IDEManager {
+const IDEManager = require('./src/managers/ide-manager');
+const CLIManager = require('./src/managers/cli-manager');
+const Logger = require('./src/utils/logger');
+const NotificationManager = require('./src/utils/notifications');
+
+class AICodeUpdater {
   constructor() {
-    this.supportedIDEs = {
-      cursor: {
-        name: 'Cursor',
-        commands: {
-          listExtensions: '--list-extensions --show-versions',
-          installExtension: '--install-extension',
-          version: '--version'
-        },
-        envVar: 'CURSOR_PATH',
-        priority: 1
-      },
-      vscode: {
-        name: 'VS Code',
-        commands: {
-          listExtensions: '--list-extensions',
-          installExtension: '--install-extension',
-          version: '--version'
-        },
-        envVar: 'VSCODE_PATH',
-        priority: 2
-      },
-      antigravity: {
-        name: 'Antigravity',
-        commands: {
-          listExtensions: '--list-extensions --show-versions',
-          installExtension: '--install-extension',
-          version: '--version'
-        },
-        envVar: 'ANTIGRAVITY_PATH',
-        priority: 3,
-        macPath: '/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity' // Hypothetical path, need to verify or make dynamic if possible
-      }
-    };
+    this.isDryRun = process.argv.includes('--dry-run');
+    this.isCronMode = !process.stdout.isTTY;
+    this.tempDir = path.join(__dirname, 'temp');
 
-    // Standard macOS paths
-    this.macPaths = {
-      cursor: '/Applications/Cursor.app/Contents/Resources/app/bin/cursor',
-      vscode: '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code',
-      antigravity: `${process.env.HOME}/.antigravity/antigravity/bin/antigravity` // Based on previous `which` output
-    };
-
-    this.detectedIDEs = [];
-    this.currentIDE = null;
-  }
-
-  detectAvailableIDEs() {
-    this.log('Detecting available IDEs...');
-    const available = [];
-
-    for (const [ide, config] of Object.entries(this.supportedIDEs)) {
-      try {
-        let command = process.env[config.envVar] || ide;
-
-        // Try multiple detection methods for better cross-device compatibility
-        let detected = false;
-
-        // Method 1: Try CLI command with timeout
-        try {
-          execSync(`${command} ${config.commands.version}`, {
-            stdio: 'ignore',
-            timeout: 10000,
-            env: { ...process.env, DISPLAY: process.env.DISPLAY || ':0' }
-          });
-          detected = true;
-        } catch (cliError) {
-          // Try to find binary at standard path
-          if (process.platform === 'darwin' && this.macPaths[ide]) {
-            if (fs.existsSync(this.macPaths[ide])) {
-              command = `"${this.macPaths[ide]}"`;
-              detected = true;
-              this.log(`✓ ${config.name} detected at ${this.macPaths[ide]}`, 'success');
-            }
-          }
-
-          if (!detected) {
-            this.log(`CLI detection failed for ${config.name}, trying folder detection...`, 'warning');
-          }
-        }
-
-        // Method 2: Check for extension folders (fallback)
-        if (!detected) {
-          const homeDir = process.env.HOME || process.env.USERPROFILE;
-          let extensionPath;
-
-          switch (ide) {
-            case 'cursor':
-              extensionPath = path.join(homeDir, '.cursor', 'extensions');
-              break;
-            case 'vscode':
-              extensionPath = path.join(homeDir, '.vscode', 'extensions');
-              break;
-            case 'antigravity':
-              extensionPath = path.join(homeDir, '.antigravity', 'extensions');
-              break;
-          }
-
-          if (extensionPath && fs.existsSync(extensionPath)) {
-            detected = true;
-            this.log(`✓ ${config.name} detected via folder structure`, 'success');
-          }
-        }
-
-        if (detected) {
-          available.push({
-            ide,
-            config,
-            command,
-            priority: config.priority
-          });
-          this.log(`✓ ${config.name} detected`, 'success');
-        } else {
-          this.log(`✗ ${config.name} not available`, 'warning');
-        }
-      } catch (error) {
-        this.log(`✗ ${config.name} detection failed: ${error.message}`, 'warning');
-      }
-    }
-
-    // Sort by priority (lower number = higher priority)
-    available.sort((a, b) => a.priority - b.priority);
-    this.detectedIDEs = available;
-
-    if (available.length === 0) {
-      throw new Error('No supported IDE found (Cursor or VS Code)');
-    }
-
-    this.log(`Found ${available.length} IDE(s): ${available.map(ide => ide.config.name).join(', ')}`, 'info');
-    return available;
-  }
-
-  async scanIDEs(extensionId) {
-    const results = [];
-    const homeDir = process.env.HOME || process.env.USERPROFILE;
-
-    for (const { ide, config, command } of this.detectedIDEs) {
-      let version = null;
-      try {
-        this.log(`Checking ${config.name} for Augment extension...`);
-
-        // Try folder first
-        let extensionDir;
-        switch (ide) {
-          case 'cursor':
-            extensionDir = path.join(homeDir, '.cursor', 'extensions');
-            break;
-          case 'vscode':
-            extensionDir = path.join(homeDir, '.vscode', 'extensions');
-            break;
-          case 'antigravity':
-            extensionDir = path.join(homeDir, '.antigravity', 'extensions');
-            break;
-        }
-
-        if (extensionDir) {
-          version = await this.getExtensionVersionFromDir(extensionDir, extensionId);
-        }
-
-        // Fallback to CLI command
-        if (!version) {
-          try {
-            const output = execSync(`${command} ${config.commands.listExtensions}`, {
-              encoding: 'utf8',
-              stdio: ['ignore', 'pipe', 'ignore'],
-              timeout: 10000
-            });
-
-            let match;
-            if (ide === 'cursor' || ide === 'antigravity') {
-              // Cursor and Antigravity support --show-versions
-              match = output.match(new RegExp(`${extensionId.replace('.', '\\.')}@(\\d+\\.\\d+\\.\\d+)`));
-            } else {
-              if (output.includes(extensionId)) {
-                // VS Code doesn't show version in list, try to read from folder again or assume installed
-                // If we couldn't read folder before, we might not get version here.
-                // But we know it's installed.
-                match = await this.getExtensionVersionFromDir(extensionDir, extensionId);
-                if (!match) match = 'Installed (unknown version)';
-              }
-            }
-
-            if (match) {
-              version = (typeof match === 'string') ? match : match[1];
-            }
-          } catch (cliError) {
-            // CLI failed
-          }
-        }
-
-        if (version) {
-          this.log(`Found in ${config.name}: ${version}`, 'success');
-        } else {
-          this.log(`Not found in ${config.name}`, 'warning');
-        }
-      } catch (error) {
-        this.log(`${config.name} check failed: ${error.message}`, 'warning');
-      }
-
-      results.push({ ide, config, command, version });
-    }
-    return results;
-  }
-
-  async getExtensionVersionFromDir(extensionDir, extensionId) {
-    try {
-      if (fs.existsSync(extensionDir)) {
-        const extensions = fs.readdirSync(extensionDir);
-        // Look for folders starting with extensionId
-        // Note: extensionId is like 'augment.vscode-augment'
-        // Folders are usually 'publisher.name-version'
-        // But the user code previously used 'augment.vscode-augment-' prefix check.
-        // Let's stick to that pattern if it works, or make it more robust.
-
-        const prefix = `${extensionId}-`;
-        const augmentFolders = extensions.filter(folder => folder.startsWith(prefix));
-
-        if (augmentFolders.length > 0) {
-          // If multiple versions exist, return the highest version
-          const versions = augmentFolders
-            .map(folder => folder.replace(prefix, ''))
-            .filter(v => semver.valid(v))
-            .sort((a, b) => semver.rcompare(a, b)); // Sort descending
-
-          if (versions.length > 0) {
-            return versions[0]; // Return highest version
-          }
-        }
-      }
-    } catch (error) {
-      // Ignore errors
-    }
-    return null;
-  }
-
-  async findExtensionInIDEs(extensionId) {
-    // Legacy support using scanIDEs
-    const results = await this.scanIDEs(extensionId);
-    const found = results.find(r => r.version);
-    if (found) {
-      this.currentIDE = { ide: found.ide, config: found.config, command: found.command };
-      return found.version;
-    }
-    return null;
-  }
-
-
-
-  async installExtensionInCurrentIDE(vsixPath) {
-    if (!this.currentIDE) {
-      throw new Error('No IDE selected for installation');
-    }
-
-    const { config, command } = this.currentIDE;
-    this.log(`Installing extension via ${config.name} CLI...`);
-
-    try {
-      execSync(`${command} ${config.commands.installExtension} "${vsixPath}"`, {
-        stdio: 'inherit',
-        timeout: 60000, // Increased timeout for slower devices
-        env: { ...process.env, DISPLAY: process.env.DISPLAY || ':0' }
-      });
-
-      this.log(`Extension installed successfully in ${config.name}`, 'success');
-    } catch (error) {
-      this.log(`Installation failed: ${error.message}`, 'error');
-      throw new Error(`Failed to install extension in ${config.name}: ${error.message}`);
-    }
-  }
-
-  async installExtensionInAllIDEs(vsixPath) {
-    this.log('Installing extension in all available IDEs...');
-
-    for (const { ide, config, command } of this.detectedIDEs) {
-      try {
-        this.log(`Installing in ${config.name}...`);
-        execSync(`${command} ${config.commands.installExtension} "${vsixPath}"`, {
-          stdio: 'inherit',
-          timeout: 30000
-        });
-        this.log(`✓ Installed in ${config.name}`, 'success');
-      } catch (error) {
-        this.log(`✗ Failed to install in ${config.name}: ${error.message}`, 'error');
-      }
-    }
-  }
-
-  log(message, level = 'info') {
-    const colors = {
-      info: chalk.blue,
-      success: chalk.green,
-      warning: chalk.yellow,
-      error: chalk.red
-    };
-
-    console.log(`${colors[level](`[IDE]`)} ${message}`);
-  }
-}
-
-class AugmentMonitor {
-  constructor() {
+    // Extension configuration
     this.extensionId = 'augment.vscode-augment';
     this.publisherId = 'augment';
     this.extensionName = 'vscode-augment';
-    this.tempDir = path.join(__dirname, 'temp');
-    this.isDryRun = process.argv.includes('--dry-run');
-    this.isCronMode = !process.stdout.isTTY; // Detect if running from cron
 
-    // Initialize IDE manager
+    // Initialize managers
     this.ideManager = new IDEManager();
+    this.cliManager = new CLIManager();
+    this.logger = new Logger();
+    this.notifications = new NotificationManager(this.isDryRun);
 
     // Ensure temp directory exists
     if (!fs.existsSync(this.tempDir)) {
-      fs.mkdirSync(this.tempDir);
+      fs.mkdirSync(this.tempDir, { recursive: true });
     }
   }
 
-  /**
-   * Normalize a version string to handle suffixes like "-universal"
-   * @param {string} version - Version string to normalize
-   * @returns {string|null} - Normalized version or null if invalid
-   */
-  normalizeVersion(version) {
-    if (!version) return null;
-
-    const coerced = semver.coerce(version);
-    return coerced ? coerced.version : null;
-  }
-
-  log(message, level = 'info') {
-    const timestamp = new Date().toISOString();
-    const colors = {
-      info: chalk.blue,
-      success: chalk.green,
-      warning: chalk.yellow,
-      error: chalk.red
-    };
-
-    console.log(`[${timestamp}] ${colors[level](level.toUpperCase())}: ${message}`);
-  }
-
-  async getCurrentVersion() {
+  async getLatestMarketplaceVersion() {
     try {
-      this.log('Checking current Augment version...');
+      this.logger.info('Fetching latest Augment version from VS Code Marketplace...');
 
-      // Detect available IDEs first
-      this.ideManager.detectAvailableIDEs();
-
-      // Find extension in any available IDE
-      const version = await this.ideManager.findExtensionInIDEs(this.extensionId);
-
-      if (version) {
-        this.log(`Current version: ${version}`, 'info');
-        return version;
-      } else {
-        this.log('Augment extension not found in any IDE', 'warning');
-        return null;
-      }
-    } catch (error) {
-      this.log(`Failed to get current version: ${error.message}`, 'error');
-      throw error;
-    }
-  }
-
-  async getLatestVersion() {
-    try {
-      this.log('Fetching latest version from VS Code Marketplace...');
-
-      // Try the public API first
       const response = await fetch('https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json;api-version=3.0-preview.1',
-          'User-Agent': 'augment-monitor/1.0.0'
+          'User-Agent': 'ai-code-updater/2.0.0'
         },
         body: JSON.stringify({
           filters: [{
-            criteria: [
-              { filterType: 7, value: this.extensionId }
-            ],
+            criteria: [{ filterType: 7, value: this.extensionId }],
             pageNumber: 1,
             pageSize: 1,
             sortBy: 0,
@@ -400,107 +61,111 @@ class AugmentMonitor {
       });
 
       if (!response.ok) {
-        this.log(`API failed with ${response.status}, trying web scraping fallback...`, 'warning');
-        return await this.getLatestVersionFallback();
+        throw new Error(`API failed: ${response.status}`);
       }
 
       const data = await response.json();
-
-      if (!data.results || !data.results[0] || !data.results[0].extensions || !data.results[0].extensions[0]) {
-        this.log('No extension found in API response, trying fallback...', 'warning');
-        return await this.getLatestVersionFallback();
+      if (!data.results?.[0]?.extensions?.[0]?.versions?.[0]) {
+        throw new Error('No extension found');
       }
 
-      const extension = data.results[0].extensions[0];
-      const version = extension.versions[0].version;
-
-      this.log(`Latest version: ${version}`, 'info');
+      const version = data.results[0].extensions[0].versions[0].version;
+      this.logger.info(`Latest Augment version: ${version}`);
       return version;
     } catch (error) {
-      this.log(`API failed: ${error.message}, trying fallback...`, 'warning');
-      return await this.getLatestVersionFallback();
+      this.logger.warn(`Marketplace API failed: ${error.message}, trying fallback...`);
+      return this.getVersionFallback();
     }
   }
 
-  async getLatestVersionFallback() {
-    try {
-      this.log('Using web scraping fallback...');
-
+  async getVersionFallback() {
       const response = await fetch(`https://marketplace.visualstudio.com/items?itemName=${this.extensionId}`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-        }
+      headers: { 'User-Agent': 'Mozilla/5.0' }
       });
 
-      if (!response.ok) {
-        throw new Error(`Marketplace page failed with status: ${response.status}`);
-      }
+    if (!response.ok) throw new Error(`Fallback failed: ${response.status}`);
 
       const html = await response.text();
+    const patterns = [/"version":"([^"]+)"/, /Version\s+([0-9]+\.[0-9]+\.[0-9]+)/i];
 
-      // Look for version in the HTML - multiple patterns to try
-      const versionPatterns = [
-        /"version":"([^"]+)"/,
-        /Version\s+([0-9]+\.[0-9]+\.[0-9]+)/i,
-        /"Version":"([^"]+)"/,
-        /data-version="([^"]+)"/
-      ];
-
-      for (const pattern of versionPatterns) {
+    for (const pattern of patterns) {
         const match = html.match(pattern);
-        if (match && match[1]) {
-          const version = match[1];
-          this.log(`Latest version (fallback): ${version}`, 'info');
-          return version;
-        }
-      }
-
-      throw new Error('Could not find version in marketplace page');
-    } catch (error) {
-      this.log(`Fallback also failed: ${error.message}`, 'error');
-      throw error;
+      if (match?.[1]) return match[1];
     }
+
+    throw new Error('Could not find version');
   }
 
-  async sendNativeNotification(title, message, buttons = ['OK']) {
+  async downloadVsix(version) {
+    this.logger.info(`Downloading VSIX for Augment v${version}...`);
+
+    if (this.isDryRun) {
+      this.logger.warn('DRY RUN: Would download VSIX');
+      return path.join(this.tempDir, `${this.extensionId}-${version}.vsix`);
+    }
+
+    const url = `https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${this.publisherId}/vsextensions/${this.extensionName}/${version}/vspackage`;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const response = await fetch(url, {
+          headers: {
+            'Accept': 'application/octet-stream',
+            'User-Agent': 'VSCode/1.85.0'
+          },
+          timeout: 60000
+        });
+
+        if (!response.ok) throw new Error(`Status: ${response.status}`);
+
+        const buffer = await response.buffer();
+        if (buffer.length === 0) throw new Error('Empty file');
+
+        const filePath = path.join(this.tempDir, `${this.extensionId}-${version}.vsix`);
+        fs.writeFileSync(filePath, buffer);
+
+        this.logger.success(`Downloaded (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
+        return filePath;
+    } catch (error) {
+        this.logger.error(`Attempt ${attempt} failed: ${error.message}`);
+        if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
+      }
+    }
+
+    throw new Error('Download failed after 3 attempts');
+  }
+
+  cleanupFile(filePath) {
     try {
-      if (this.isDryRun) {
-        this.log(`DRY RUN: Would send notification: ${title} - ${message}`, 'warning');
-        return 'OK';
+      if (!this.isDryRun && fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        this.logger.success(`Cleaned up: ${path.basename(filePath)}`);
       }
-
-      // Use osascript to show native macOS notification with dialog
-      const buttonList = buttons.map(b => `"${b}"`).join(', ');
-      const script = `display dialog "${message}" with title "${title}" buttons {${buttonList}} default button "${buttons[buttons.length - 1]}" with icon note`;
-
-      const result = execSync(`osascript -e '${script}'`, {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore']
-      });
-
-      // Extract button result
-      const match = result.match(/button returned:(.+)$/);
-      return match ? match[1].trim() : buttons[0];
     } catch (error) {
-      this.log(`Native notification failed: ${error.message}`, 'warning');
-      return null; // Fallback to CLI prompt
+      this.logger.warn(`Cleanup failed: ${error.message}`);
     }
   }
 
-  async promptSelection(ideStatus, latestVersion) {
-    if (this.isCronMode) {
-      // In cron mode, we just check if any update is needed and ask to update ALL
-      const updatesNeeded = ideStatus.filter(s => !s.version || semver.gt(latestVersion, s.version));
-      if (updatesNeeded.length === 0) return [];
+  async showMainMenu() {
+    console.log('\n' + chalk.cyan.bold('🚀 AI Code Tools Updater'));
+    console.log(chalk.gray('═'.repeat(60)));
+    console.log(chalk.white('Manage updates for your AI coding tools\n'));
 
-      const message = `Latest: ${latestVersion}\\nUpdates available for: ${updatesNeeded.map(s => s.config.name).join(', ')}`;
-      const result = await this.sendNativeNotification(
-        'Augment Extension Update Available',
-        message,
-        ['Cancel', 'Update All']
-      );
-      return result === 'Update All' ? updatesNeeded : [];
-    }
+    const options = [
+      { key: '1', label: 'Check & Update Augment Extension (VS Code/Cursor)', action: 'augment' },
+      { key: '2', label: 'Check & Update Claude Code CLI', action: 'claude' },
+      { key: '3', label: 'Check & Update Gemini CLI', action: 'gemini' },
+      { key: '4', label: 'Check & Update ALL tools', action: 'all' },
+      { key: '5', label: 'Show status of all tools', action: 'status' },
+      { key: 'q', label: 'Quit', action: 'quit' }
+    ];
+
+    options.forEach(opt => {
+      const keyStyle = chalk.bold.cyan(opt.key);
+      console.log(`  ${keyStyle})  ${opt.label}`);
+    });
+
+    console.log('');
 
     return new Promise((resolve) => {
       const rl = readline.createInterface({
@@ -508,353 +173,386 @@ class AugmentMonitor {
         output: process.stdout
       });
 
-      const options = [];
-      let optionIndex = 1;
-
-      // Option 1: Update All (if applicable)
-      options.push({
-        key: 'a',
-        label: 'Update All IDEs',
-        value: ideStatus
-      });
-
-      // Individual IDEs
-      ideStatus.forEach(status => {
-        options.push({
-          key: optionIndex.toString(),
-          label: `Update ${status.config.name} only`,
-          value: [status]
-        });
-        optionIndex++;
-      });
-
-      console.log('\n' + chalk.cyan('👉 Select an option:'));
-      options.forEach(opt => {
-        console.log(`${chalk.bold(opt.key)}) ${opt.label}`);
-      });
-      console.log(`${chalk.bold('q')}) Quit`);
-
-      rl.question(chalk.bold('\nEnter choice: '), (answer) => {
+      rl.question(chalk.bold('Enter choice: '), (answer) => {
         rl.close();
         const choice = answer.toLowerCase().trim();
-
-        if (choice === 'q') {
-          resolve([]);
-          return;
-        }
-
-        const selectedOption = options.find(o => o.key === choice);
-        if (selectedOption) {
-          resolve(selectedOption.value);
-        } else {
-          console.log(chalk.red('Invalid selection'));
-          resolve([]);
-        }
+        const selected = options.find(o => o.key === choice);
+        resolve(selected?.action || null);
       });
     });
   }
 
-  async downloadVsix(version) {
-    const maxRetries = 3;
-    let lastError;
+  async showStatus() {
+    console.log('\n' + chalk.cyan.bold('📊 AI Tools Status'));
+    console.log(chalk.gray('─'.repeat(60)));
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        this.log(`Downloading VSIX file for version ${version}... (attempt ${attempt}/${maxRetries})`);
-
-        if (this.isDryRun) {
-          this.log('DRY RUN: Would download VSIX file', 'warning');
-          return path.join(this.tempDir, `${this.extensionId}-${version}.vsix`);
-        }
-
-        const downloadUrl = `https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${this.publisherId}/vsextensions/${this.extensionName}/${version}/vspackage`;
-
-        const response = await fetch(downloadUrl, {
-          headers: {
-            'Accept': 'application/octet-stream',
-            'User-Agent': 'VSCode/1.85.0 (Windows NT 10.0; Win64; x64)',
-            'Accept-Encoding': 'gzip, deflate, br'
-          },
-          timeout: 60000 // 60 second timeout
-        });
-
-        if (!response.ok) {
-          throw new Error(`Download failed with status: ${response.status}`);
-        }
-
-        const fileName = `${this.extensionId}-${version}.vsix`;
-        const filePath = path.join(this.tempDir, fileName);
-
-        const buffer = await response.buffer();
-
-        // Verify downloaded file is not empty
-        if (buffer.length === 0) {
-          throw new Error('Downloaded file is empty');
-        }
-
-        fs.writeFileSync(filePath, buffer);
-
-        // Verify file was written successfully
-        if (!fs.existsSync(filePath)) {
-          throw new Error('File write verification failed');
-        }
-
-        const fileSizeMB = (buffer.length / (1024 * 1024)).toFixed(2);
-        this.log(`Downloaded ${fileName} (${fileSizeMB} MB)`, 'success');
-
-        return filePath;
-      } catch (error) {
-        lastError = error;
-        this.log(`Download attempt ${attempt} failed: ${error.message}`, 'error');
-
-        if (attempt < maxRetries) {
-          const delayMs = 2000 * attempt; // Progressive delay: 2s, 4s, 6s
-          this.log(`Retrying in ${delayMs / 1000} seconds...`, 'warning');
-          await new Promise(resolve => setTimeout(resolve, delayMs));
-        }
-      }
-    }
-
-    // All retries failed
-    throw new Error(`Download failed after ${maxRetries} attempts. Last error: ${lastError.message}`);
-  }
-
-  async installExtensions(targets, vsixPath) {
-    this.log(`Installing extension to ${targets.length} IDE(s)...`);
-
-    const results = [];
-
-    for (const target of targets) {
-      const { config, command } = target;
-      try {
-        this.log(`Installing in ${config.name}...`);
-
-        if (this.isDryRun) {
-          this.log(`DRY RUN: Would install in ${config.name}`, 'warning');
-          results.push({ target, success: true });
-          continue;
-        }
-
-        execSync(`${command} ${config.commands.installExtension} "${vsixPath}"`, {
-          stdio: 'inherit',
-          timeout: 60000,
-          env: { ...process.env, DISPLAY: process.env.DISPLAY || ':0' }
-        });
-
-        this.log(`✓ Installed in ${config.name}`, 'success');
-        results.push({ target, success: true });
-      } catch (error) {
-        this.log(`✗ Failed to install in ${config.name}: ${error.message}`, 'error');
-        results.push({ target, success: false, error });
-      }
-    }
-
-    return results;
-  }
-
-  async verifyInstallations(targets, expectedVersion) {
-    this.log('Verifying installations...');
-
-    if (this.isDryRun) {
-      this.log('DRY RUN: Would verify installations', 'warning');
-      return { success: true, failed: [] };
-    }
-
-    const maxRetries = 5;
-    const delayMs = 3000;
-    const failed = [];
-
-    for (const target of targets) {
-      let verified = false;
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-
-        // Check version for this specific IDE
-        const allStatus = await this.ideManager.scanIDEs(this.extensionId);
-        const targetStatus = allStatus.find(s => s.ide === target.ide);
-
-        if (targetStatus && targetStatus.version === expectedVersion) {
-          this.log(`✓ Verified ${target.config.name}: ${targetStatus.version}`, 'success');
-          verified = true;
-          break;
-        } else {
-          this.log(`Attempt ${attempt}: ${target.config.name} has ${targetStatus ? targetStatus.version : 'unknown'}, expected ${expectedVersion}`, 'warning');
-        }
-      }
-
-      if (!verified) {
-        this.log(`✗ Failed to verify installation for ${target.config.name}`, 'error');
-        failed.push(target);
-      }
-    }
-
-    if (failed.length > 0) {
-      return { success: false, failed };
-    }
-
-    return { success: true, failed: [] };
-  }
-
-  cleanupFile(filePath) {
+    // Augment Extension Status
+    console.log(chalk.bold('\n🔌 Augment Extension (VS Code/Cursor)'));
     try {
-      if (this.isDryRun) {
-        this.log('DRY RUN: Would delete VSIX file', 'warning');
-        return;
-      }
+      this.ideManager.detectAvailableIDEs();
+      const ideStatus = await this.ideManager.scanForExtension(this.extensionId);
+      const latestAugment = await this.getLatestMarketplaceVersion();
 
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        this.log(`Cleaned up: ${path.basename(filePath)}`, 'success');
+      ideStatus.forEach(status => {
+        const current = status.version || 'Not installed';
+        const needsUpdate = !status.version || semver.gt(latestAugment, status.version);
+        const statusIcon = needsUpdate ? chalk.yellow('⚠️') : chalk.green('✓');
+        console.log(`  ${statusIcon} ${status.config.name.padEnd(12)} ${chalk.white(current.padEnd(15))} ${needsUpdate ? chalk.cyan('→ ' + latestAugment) : chalk.green('Up to date')}`);
+      });
+
+      if (ideStatus.length === 0) {
+        console.log(chalk.gray('  No supported IDEs detected'));
       }
     } catch (error) {
-      this.log(`Cleanup failed: ${error.message}`, 'warning');
+      console.log(chalk.red(`  Error checking Augment: ${error.message}`));
     }
+
+    // CLI Tools Status
+    console.log(chalk.bold('\n🖥️  CLI Tools'));
+    try {
+      await this.cliManager.detectInstalledCLIs();
+      const cliStatus = await this.cliManager.checkAllForUpdates();
+
+      if (cliStatus.length === 0) {
+        console.log(chalk.gray('  No CLI tools installed'));
+      }
+
+      for (const cli of cliStatus) {
+        const statusIcon = cli.needsUpdate ? chalk.yellow('⚠️') : chalk.green('✓');
+        const current = `v${cli.installedVersion}`;
+        const latest = cli.latestVersion ? `→ v${cli.latestVersion}` : '';
+        console.log(`  ${statusIcon} ${cli.config.name.padEnd(12)} ${chalk.white(current.padEnd(15))} ${cli.needsUpdate ? chalk.cyan(latest) : chalk.green('Up to date')}`);
+      }
+
+      // Show available but not installed
+      const availableCLIs = this.cliManager.getAvailableCLIs();
+      const notInstalled = availableCLIs.filter(cli => 
+        !cliStatus.find(s => s.id === cli.id)
+      );
+
+      if (notInstalled.length > 0) {
+        console.log(chalk.gray('\n  Not installed:'));
+        notInstalled.forEach(cli => {
+          console.log(chalk.gray(`    - ${cli.name}: npm install -g ${cli.npmPackage}`));
+        });
+      }
+    } catch (error) {
+      console.log(chalk.red(`  Error checking CLI tools: ${error.message}`));
+    }
+
+    console.log(chalk.gray('\n' + '─'.repeat(60)));
+  }
+
+  async updateAugment() {
+    console.log('\n' + chalk.cyan.bold('🔌 Augment Extension Update'));
+    console.log(chalk.gray('─'.repeat(60)));
+
+    this.ideManager.detectAvailableIDEs();
+    const ideStatus = await this.ideManager.scanForExtension(this.extensionId);
+
+    if (ideStatus.length === 0) {
+      console.log(chalk.yellow('No supported IDEs detected. Install Cursor or VS Code first.'));
+      return;
+    }
+
+    const latestVersion = await this.getLatestMarketplaceVersion();
+
+    // Show current status
+    let anyNeedsUpdate = false;
+    ideStatus.forEach(status => {
+      const current = status.version || 'Not installed';
+      const needsUpdate = !status.version || semver.gt(latestVersion, status.version);
+      if (needsUpdate) anyNeedsUpdate = true;
+
+      const statusColor = needsUpdate ? chalk.yellow : chalk.green;
+      console.log(`${status.config.name}: ${statusColor(current)} ${needsUpdate ? '→ ' + latestVersion : '(up to date)'}`);
+    });
+
+    if (!anyNeedsUpdate) {
+      console.log(chalk.green('\n✅ All IDEs are up to date!'));
+      return;
+    }
+
+    // Prompt for update
+    const targets = await this.promptIDESelection(ideStatus, latestVersion);
+    if (targets.length === 0) {
+      console.log(chalk.gray('No updates selected.'));
+      return;
+    }
+
+    let vsixPath = null;
+    try {
+      vsixPath = await this.downloadVsix(latestVersion);
+
+      for (const target of targets) {
+        await this.ideManager.installExtension(target, vsixPath, this.isDryRun);
+      }
+
+      console.log(chalk.green('\n✅ Update complete! Reload your IDE(s) for changes to take effect.'));
+    } finally {
+      if (vsixPath) this.cleanupFile(vsixPath);
+    }
+  }
+
+  async promptIDESelection(ideStatus, latestVersion) {
+    return new Promise((resolve) => {
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+
+      console.log('\n' + chalk.cyan('Select IDEs to update:'));
+      console.log(`  ${chalk.bold('a')} - Update ALL`);
+      ideStatus.forEach((status, i) => {
+        console.log(`  ${chalk.bold(i + 1)} - ${status.config.name} only`);
+      });
+      console.log(`  ${chalk.bold('q')} - Cancel`);
+
+      rl.question(chalk.bold('\nChoice: '), (answer) => {
+        rl.close();
+        const choice = answer.toLowerCase().trim();
+
+        if (choice === 'q') return resolve([]);
+        if (choice === 'a') return resolve(ideStatus);
+
+        const idx = parseInt(choice) - 1;
+        if (idx >= 0 && idx < ideStatus.length) {
+          return resolve([ideStatus[idx]]);
+        }
+
+          resolve([]);
+      });
+    });
+  }
+
+  async updateClaudeCode() {
+    console.log('\n' + chalk.cyan.bold('🤖 Claude Code CLI Update'));
+    console.log(chalk.gray('─'.repeat(60)));
+
+    await this.cliManager.detectInstalledCLIs();
+    const claudeCLI = this.cliManager.detectedCLIs.find(c => c.id === 'claude-code');
+
+    if (!claudeCLI) {
+      console.log(chalk.yellow('Claude Code CLI is not installed.'));
+      console.log(chalk.gray(`Install with: npm install -g @anthropic-ai/claude-code`));
+
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+
+      return new Promise((resolve) => {
+        rl.question(chalk.bold('Install now? (y/n): '), async (answer) => {
+          rl.close();
+          if (answer.toLowerCase() === 'y') {
+            await this.cliManager.installCLI('claude-code', this.isDryRun);
+          }
+          resolve();
+        });
+      });
+    }
+
+    const latestVersion = await this.cliManager.getLatestVersion(claudeCLI.config.npmPackage);
+    const needsUpdate = semver.gt(latestVersion, claudeCLI.installedVersion);
+
+    console.log(`Current: v${claudeCLI.installedVersion}`);
+    console.log(`Latest:  v${latestVersion}`);
+
+    if (!needsUpdate) {
+      console.log(chalk.green('\n✅ Claude Code is up to date!'));
+      return;
+    }
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    return new Promise((resolve) => {
+      rl.question(chalk.bold('\nUpdate now? (y/n): '), async (answer) => {
+        rl.close();
+        if (answer.toLowerCase() === 'y') {
+          await this.cliManager.updateCLI(claudeCLI, this.isDryRun);
+        }
+        resolve();
+      });
+    });
+  }
+
+  async updateGeminiCLI() {
+    console.log('\n' + chalk.cyan.bold('💎 Gemini CLI Update'));
+    console.log(chalk.gray('─'.repeat(60)));
+
+    await this.cliManager.detectInstalledCLIs();
+    const geminiCLI = this.cliManager.detectedCLIs.find(c => c.id === 'gemini-cli');
+
+    if (!geminiCLI) {
+      console.log(chalk.yellow('Gemini CLI is not installed.'));
+      console.log(chalk.gray(`Install with: npm install -g @google/gemini-cli`));
+
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+
+      return new Promise((resolve) => {
+        rl.question(chalk.bold('Install now? (y/n): '), async (answer) => {
+          rl.close();
+          if (answer.toLowerCase() === 'y') {
+            await this.cliManager.installCLI('gemini-cli', this.isDryRun);
+          }
+          resolve();
+        });
+      });
+    }
+
+    const latestVersion = await this.cliManager.getLatestVersion(geminiCLI.config.npmPackage);
+    const needsUpdate = semver.gt(latestVersion, geminiCLI.installedVersion);
+
+    console.log(`Current: v${geminiCLI.installedVersion}`);
+    console.log(`Latest:  v${latestVersion}`);
+
+    if (!needsUpdate) {
+      console.log(chalk.green('\n✅ Gemini CLI is up to date!'));
+      return;
+    }
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    return new Promise((resolve) => {
+      rl.question(chalk.bold('\nUpdate now? (y/n): '), async (answer) => {
+        rl.close();
+        if (answer.toLowerCase() === 'y') {
+          await this.cliManager.updateCLI(geminiCLI, this.isDryRun);
+        }
+        resolve();
+      });
+    });
+  }
+
+  async updateAll() {
+    console.log('\n' + chalk.cyan.bold('🔄 Updating All AI Tools'));
+    console.log(chalk.gray('─'.repeat(60)));
+
+    await this.updateAugment();
+    await this.updateClaudeCode();
+    await this.updateGeminiCLI();
+
+    console.log(chalk.green('\n✅ All updates complete!'));
   }
 
   async run() {
     try {
-      this.log('Starting Augment extension update check...', 'info');
-
-      // Detect IDEs
-      await this.ideManager.detectAvailableIDEs();
-
-      // Get status of all IDEs
-      const ideStatus = await this.ideManager.scanIDEs(this.extensionId);
-      const latestVersion = await this.getLatestVersion();
-
-      // Display Status
-      console.log('\n' + chalk.cyan('🔎 IDE Status Check'));
-      console.log(chalk.gray('─'.repeat(60)));
-      console.log(chalk.bold('Latest Version: ') + chalk.green(latestVersion));
-      console.log(chalk.gray('─'.repeat(60)));
-
-      let updateAvailable = false;
-      ideStatus.forEach(status => {
-        const v = status.version || 'Not installed';
-        const isOutdated = !status.version || semver.gt(latestVersion, status.version);
-        if (isOutdated) updateAvailable = true;
-
-        const color = isOutdated ? chalk.yellow : chalk.green;
-        console.log(`${chalk.bold(status.config.name.padEnd(10))} | ${color(v.padEnd(15))} | ${isOutdated ? chalk.cyan('Update Available') : chalk.green('Up to date')}`);
-      });
-      console.log(chalk.gray('─'.repeat(60)));
-
-      // If no updates available and not forcing, maybe just exit?
-      // But user might want to reinstall or update specific IDEs even if "up to date" (e.g. if one is missing)
-      // The logic above sets updateAvailable if ANY is outdated or missing.
-
-      if (!updateAvailable && !process.argv.includes('--force')) {
-        console.log(chalk.green('\n✅ All IDEs are up to date.'));
-        if (this.isCronMode) return;
-
-        // In interactive mode, we still show the menu so they can reinstall if they want
-        console.log(chalk.gray('You can still choose to reinstall below.'));
+      if (this.isDryRun) {
+        console.log(chalk.yellow('🔸 DRY RUN MODE - No actual changes will be made\n'));
       }
 
-      // Prompt user for selection
-      const targets = await this.promptSelection(ideStatus, latestVersion);
-
-      if (targets.length === 0) {
-        this.log('No updates selected.', 'info');
+      // If run without TTY (cron mode), just check and notify
+      if (this.isCronMode) {
+        await this.runCronMode();
         return;
       }
 
-      let vsixPath = null;
+      // Interactive mode
+      while (true) {
+        const action = await this.showMainMenu();
 
-      try {
-        // Download VSIX
-        vsixPath = await this.downloadVsix(latestVersion);
+        switch (action) {
+          case 'augment':
+            await this.updateAugment();
+            break;
+          case 'claude':
+            await this.updateClaudeCode();
+            break;
+          case 'gemini':
+            await this.updateGeminiCLI();
+            break;
+          case 'all':
+            await this.updateAll();
+            break;
+          case 'status':
+            await this.showStatus();
+            break;
+          case 'quit':
+            console.log(chalk.gray('\nGoodbye! 👋'));
+            return;
+          default:
+            console.log(chalk.red('Invalid selection'));
+        }
 
-        // Install extension to selected targets
-        const installResults = await this.installExtensions(targets, vsixPath);
-        const successfulInstalls = installResults.filter(r => r.success).map(r => r.target);
-        const failedInstalls = installResults.filter(r => !r.success);
-
-        // Verify installations for successful ones
-        const verifyResult = await this.verifyInstallations(successfulInstalls, latestVersion);
-
-        // Success message
-        console.log('\n' + chalk.cyan('📊 Update Summary'));
-        console.log(chalk.gray('─'.repeat(60)));
-        console.log(`${chalk.bold('Target'.padEnd(15))} | ${chalk.bold('Status'.padEnd(20))} | ${chalk.bold('Details')}`);
-        console.log(chalk.gray('─'.repeat(60)));
-
-        targets.forEach(t => {
-          const installResult = installResults.find(r => r.target.ide === t.ide);
-          const isVerified = verifyResult.success && !verifyResult.failed.some(f => f.ide === t.ide);
-
-          let status = chalk.red('Failed');
-          let details = '';
-
-          if (installResult && !installResult.success) {
-            status = chalk.red('Install Failed');
-            details = installResult.error.message.split('\n')[0].substring(0, 30) + '...';
-          } else if (isVerified) {
-            status = chalk.green('Success');
-            details = `Updated to ${latestVersion}`;
-          } else {
-            status = chalk.yellow('Verify Failed');
-            details = 'Version mismatch or check failed';
-          }
-
-          console.log(`${t.config.name.padEnd(15)} | ${status.padEnd(29)} | ${details}`);
+        // Pause before showing menu again
+        await new Promise((resolve) => {
+          const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+          });
+          rl.question(chalk.gray('\nPress ENTER to continue...'), () => {
+            rl.close();
+            resolve();
+          });
         });
-        console.log(chalk.gray('─'.repeat(60)));
+      }
+    } catch (error) {
+      this.logger.error(`Fatal error: ${error.message}`);
+      process.exit(1);
+    }
+  }
 
-        if (verifyResult.success && failedInstalls.length === 0) {
-          console.log('\n' + chalk.green('✅ All updates completed successfully!'));
-        } else {
-          console.log('\n' + chalk.yellow('⚠️ Completed with some issues. See summary above.'));
-        }
+  async runCronMode() {
+    this.logger.info('Running in cron mode...');
 
-        console.log('\nYou may need to reload your IDEs for changes to take effect.');
+    // Check Augment
+    try {
+      this.ideManager.detectAvailableIDEs();
+      const ideStatus = await this.ideManager.scanForExtension(this.extensionId);
+      const latestAugment = await this.getLatestMarketplaceVersion();
 
-        // Send notification in cron mode
-        if (this.isCronMode) {
-          const successCount = successfulInstalls.length - verifyResult.failed.length;
-          const totalCount = targets.length;
+      const augmentNeedsUpdate = ideStatus.some(s => 
+        !s.version || semver.gt(latestAugment, s.version)
+      );
 
-          if (successCount === totalCount) {
-            await this.sendNativeNotification(
-              'Augment Update Complete',
-              `Successfully updated ${successCount} IDEs to version ${latestVersion}`,
-              ['OK']
-            );
-          } else {
-            await this.sendNativeNotification(
-              'Augment Update Finished',
-              `Updated ${successCount}/${totalCount} IDEs. Some failed.`,
-              ['OK']
-            );
+      if (augmentNeedsUpdate) {
+        const result = await this.notifications.sendNative(
+          'Augment Update Available',
+          `New version: ${latestAugment}`,
+          ['Later', 'Update Now']
+        );
+
+        if (result === 'Update Now') {
+          const vsixPath = await this.downloadVsix(latestAugment);
+          for (const target of ideStatus.filter(s => !s.version || semver.gt(latestAugment, s.version))) {
+            await this.ideManager.installExtension(target, vsixPath, this.isDryRun);
           }
-        }
-
-      } catch (error) {
-        // Log the specific error
-        this.log(`Update failed: ${error.message}`, 'error');
-
-        // Send failure notification in cron mode
-        if (this.isCronMode) {
-          await this.sendNativeNotification(
-            'Augment Update Failed',
-            `Failed to update: ${error.message}`,
-            ['OK']
-          );
-        }
-
-        throw error;
-      } finally {
-        // Always cleanup the downloaded file
-        if (vsixPath) {
           this.cleanupFile(vsixPath);
+          await this.notifications.showSimple('Update Complete', 'Augment has been updated');
         }
       }
+      } catch (error) {
+      this.logger.error(`Augment check failed: ${error.message}`);
+    }
 
+    // Check CLI tools
+    try {
+      await this.cliManager.detectInstalledCLIs();
+      const cliStatus = await this.cliManager.checkAllForUpdates();
+
+      for (const cli of cliStatus.filter(c => c.needsUpdate)) {
+        const result = await this.notifications.sendNative(
+          `${cli.config.name} Update Available`,
+          `v${cli.installedVersion} → v${cli.latestVersion}`,
+          ['Later', 'Update Now']
+        );
+
+        if (result === 'Update Now') {
+          await this.cliManager.updateCLI(cli, this.isDryRun);
+          await this.notifications.showSimple('Update Complete', `${cli.config.name} has been updated`);
+        }
+      }
     } catch (error) {
-      this.log(`Update process failed: ${error.message}`, 'error');
-      console.log('\n' + chalk.red('❌ Update failed'));
-      console.log(`Error: ${error.message}`);
-      process.exit(1);
+      this.logger.error(`CLI check failed: ${error.message}`);
     }
   }
 }
@@ -865,15 +563,15 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error(chalk.red('Unhandled Rejection at:'), promise, chalk.red('reason:'), reason);
+process.on('unhandledRejection', (reason) => {
+  console.error(chalk.red('Unhandled Rejection:'), reason);
   process.exit(1);
 });
 
-// Run the monitor
+// Run the updater
 if (require.main === module) {
-  const monitor = new AugmentMonitor();
-  monitor.run();
+  const updater = new AICodeUpdater();
+  updater.run();
 }
 
-module.exports = AugmentMonitor; 
+module.exports = AICodeUpdater;
