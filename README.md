@@ -9,6 +9,7 @@ A unified updater for AI coding tools - manage updates for **Augment**, **Claude
 | **Augment** | VS Code Extension | `augment.vscode-augment` |
 | **Claude Code** | npm CLI | `@anthropic-ai/claude-code` |
 | **Gemini CLI** | npm CLI | `@google/gemini-cli` |
+| **OpenAI Codex** | npm CLI | `@openai/codex` |
 
 ## Quick Start
 
@@ -47,8 +48,9 @@ Manage updates for your AI coding tools
   1)  Check & Update Augment Extension (VS Code/Cursor)
   2)  Check & Update Claude Code CLI
   3)  Check & Update Gemini CLI
-  4)  Check & Update ALL tools
-  5)  Show status of all tools
+  4)  Check & Update OpenAI Codex CLI
+  5)  Check & Update ALL tools
+  6)  Show status of all tools
   q)  Quit
 ```
 

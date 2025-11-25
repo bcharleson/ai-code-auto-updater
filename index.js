@@ -155,8 +155,9 @@ class AICodeUpdater {
       { key: '1', label: 'Check & Update Augment Extension (VS Code/Cursor)', action: 'augment' },
       { key: '2', label: 'Check & Update Claude Code CLI', action: 'claude' },
       { key: '3', label: 'Check & Update Gemini CLI', action: 'gemini' },
-      { key: '4', label: 'Check & Update ALL tools', action: 'all' },
-      { key: '5', label: 'Show status of all tools', action: 'status' },
+      { key: '4', label: 'Check & Update OpenAI Codex CLI', action: 'codex' },
+      { key: '5', label: 'Check & Update ALL tools', action: 'all' },
+      { key: '6', label: 'Show status of all tools', action: 'status' },
       { key: 'q', label: 'Quit', action: 'quit' }
     ];
 
@@ -433,6 +434,60 @@ class AICodeUpdater {
     });
   }
 
+  async updateOpenAICodex() {
+    console.log('\n' + chalk.cyan.bold('🧠 OpenAI Codex CLI Update'));
+    console.log(chalk.gray('─'.repeat(60)));
+
+    await this.cliManager.detectInstalledCLIs();
+    const codexCLI = this.cliManager.detectedCLIs.find(c => c.id === 'openai-codex');
+
+    if (!codexCLI) {
+      console.log(chalk.yellow('OpenAI Codex CLI is not installed.'));
+      console.log(chalk.gray(`Install with: npm install -g @openai/codex`));
+
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+
+      return new Promise((resolve) => {
+        rl.question(chalk.bold('Install now? (y/n): '), async (answer) => {
+          rl.close();
+          if (answer.toLowerCase() === 'y') {
+            await this.cliManager.installCLI('openai-codex', this.isDryRun);
+          }
+          resolve();
+        });
+      });
+    }
+
+    const latestVersion = await this.cliManager.getLatestVersion(codexCLI.config.npmPackage);
+    const needsUpdate = semver.gt(latestVersion, codexCLI.installedVersion);
+
+    console.log(`Current: v${codexCLI.installedVersion}`);
+    console.log(`Latest:  v${latestVersion}`);
+
+    if (!needsUpdate) {
+      console.log(chalk.green('\n✅ OpenAI Codex CLI is up to date!'));
+      return;
+    }
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    return new Promise((resolve) => {
+      rl.question(chalk.bold('\nUpdate now? (y/n): '), async (answer) => {
+        rl.close();
+        if (answer.toLowerCase() === 'y') {
+          await this.cliManager.updateCLI(codexCLI, this.isDryRun);
+        }
+        resolve();
+      });
+    });
+  }
+
   async updateAll() {
     console.log('\n' + chalk.cyan.bold('🔄 Updating All AI Tools'));
     console.log(chalk.gray('─'.repeat(60)));
@@ -440,6 +495,7 @@ class AICodeUpdater {
     await this.updateAugment();
     await this.updateClaudeCode();
     await this.updateGeminiCLI();
+    await this.updateOpenAICodex();
 
     console.log(chalk.green('\n✅ All updates complete!'));
   }
@@ -469,6 +525,9 @@ class AICodeUpdater {
             break;
           case 'gemini':
             await this.updateGeminiCLI();
+            break;
+          case 'codex':
+            await this.updateOpenAICodex();
             break;
           case 'all':
             await this.updateAll();

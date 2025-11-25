@@ -20,6 +20,13 @@ class CLIManager {
         command: 'gemini',
         description: 'Google Gemini CLI - AI agent in your terminal',
         icon: '💎'
+      },
+      'openai-codex': {
+        name: 'OpenAI Codex',
+        npmPackage: '@openai/codex',
+        command: 'codex',
+        description: 'OpenAI Codex CLI - coding agent in your terminal',
+        icon: '🧠'
       }
     };
 
