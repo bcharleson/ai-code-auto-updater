@@ -1,6 +1,6 @@
 # AI Code Tools Updater
 
-A unified updater for AI coding tools - manage updates for **Augment**, **Claude Code**, and **Gemini CLI** from one place.
+A unified updater for AI coding tools - manage updates for **Augment**, **Claude Code**, **Gemini CLI**, and **OpenAI Codex** from one place.
 
 ## Supported Tools
 
@@ -24,18 +24,62 @@ npm start
 npm test
 ```
 
-## Global Installation
+## Global Installation (Run `acu` from Anywhere)
 
-Install globally to run from anywhere:
+Install globally to run the updater from any directory:
 
 ```bash
-# Install globally
+# Option 1: Install from the project directory
+cd /path/to/ai-code-auto-updater
 npm install -g .
 
-# Now run from any directory
-ai-code-updater
-# or shorthand
-acu
+# Option 2: Using npm link (creates a symlink)
+cd /path/to/ai-code-auto-updater
+npm link
+
+# Now run from anywhere:
+acu                    # Short form
+ai-code-updater        # Long form
+```
+
+### Verify Installation
+
+```bash
+# Check if installed
+which acu
+
+# View help
+acu --help
+
+# Check version
+acu --version
+```
+
+### Uninstall Global Package
+
+```bash
+npm uninstall -g ai-code-updater
+# or if you used npm link:
+npm unlink ai-code-updater
+```
+
+## Command Line Options
+
+```
+Usage: acu [options]
+
+Options:
+  -a, --auto      Auto-pilot mode: update all tools without prompts
+  -s, --silent    Silent mode: minimal output (use with --auto)
+  --dry-run       Show what would be updated without making changes
+  -h, --help      Show help message
+  -v, --version   Show version number
+
+Examples:
+  acu                     # Interactive mode (default)
+  acu --auto              # Auto-update all tools
+  acu --auto --dry-run    # Dry run to see what would be updated
+  acu --auto --silent     # Silent auto-update (for scripts/cron)
 ```
 
 ## Interactive Menu
@@ -50,8 +94,45 @@ Manage updates for your AI coding tools
   3)  Check & Update Gemini CLI
   4)  Check & Update OpenAI Codex CLI
   5)  Check & Update ALL tools
-  6)  Show status of all tools
+  6)  🤖 Auto-pilot: Update ALL (no prompts)
+  7)  Show status of all tools
   q)  Quit
+```
+
+## Auto-Pilot Mode
+
+Auto-pilot mode automatically updates all tools without requiring user confirmation, then displays a comprehensive summary:
+
+```bash
+# From CLI
+acu --auto
+
+# Or select option 6 from the interactive menu
+```
+
+### Example Summary Output
+
+```
+📋 UPDATE SUMMARY
+════════════════════════════════════════════════════════════
+Completed in 45 seconds
+
+🔌 Augment Extension:
+   ✓ Cursor: 0.520.0 → 0.521.0
+   ✓ VS Code: 0.520.0 → 0.521.0
+
+🖥️  CLI Tools:
+   ✓ 🤖 Claude Code: v1.0.5 → v1.0.6
+   - 💎 Gemini CLI: Up to date (v0.1.22)
+   - 🧠 OpenAI Codex: Not installed
+
+────────────────────────────────────────────────────────────
+Totals:
+  Updated: 3
+  Up to date/Skipped: 1
+
+💡 Tip: Restart your IDE(s) to apply extension updates
+════════════════════════════════════════════════════════════
 ```
 
 ## macOS App
@@ -68,13 +149,52 @@ npm run create-app
 ## Automated Updates
 
 ### macOS/Linux (Cron)
+
 ```bash
 npm run install-cron
 ```
 
+This will set up a daily check for updates. When updates are available, you'll receive a macOS notification with options to update or dismiss.
+
 ### Windows (Scheduled Task)
+
 ```bash
 npm run install-task
+```
+
+## Error Handling
+
+The updater includes robust error handling for common issues:
+
+- **iCloud Sync Issues**: Automatically detects and waits for iCloud files to sync
+- **Network Errors**: Automatic retries with exponential backoff
+- **Permission Errors**: Clear suggestions for resolving permission issues
+- **Timeout Handling**: Configurable timeouts with automatic retries
+
+### Troubleshooting
+
+**iCloud Issues:**
+If running from iCloud Drive, you may experience sync delays. Consider:
+- Moving the project to a local directory
+- Waiting for iCloud sync to complete before running
+
+**Permission Errors:**
+```bash
+# Fix npm global permissions (preferred)
+mkdir ~/.npm-global
+npm config set prefix '~/.npm-global'
+echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+
+# Or use sudo (not recommended)
+sudo npm install -g ai-code-updater
+```
+
+**IDE Not Detected:**
+Set the path explicitly via environment variable:
+```bash
+export CURSOR_PATH="/path/to/cursor"
+export VSCODE_PATH="/path/to/code"
 ```
 
 ## Project Structure
@@ -88,7 +208,8 @@ ai-code-updater/
 │   │   └── cli-manager.js      # npm CLI tool management
 │   └── utils/
 │       ├── logger.js           # Logging utilities
-│       └── notifications.js    # macOS notification support
+│       ├── notifications.js    # macOS notification support
+│       └── error-handler.js    # Error handling with retries
 ├── AI Code Updater.app/        # macOS app bundle
 ├── create-app.sh               # Script to create macOS app
 ├── install-cron.sh             # Cron setup for macOS/Linux
